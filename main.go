@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 func main() {
@@ -38,8 +37,6 @@ func main() {
 		return
 	}
 
-	oneWeekAgo := time.Now().AddDate(0, 0, -7)
-
 	for _, file := range files {
 		// Create a new ExifTool instance
 		et, err := exiftool.NewExiftool()
@@ -48,45 +45,53 @@ func main() {
 			return
 		}
 		defer et.Close()
+
 		// Extract metadata from the file
 		metadata := et.ExtractMetadata(file)
+		if metadata[0].Err != nil {
+			logger.Printf("Error extracting metadata for %s: %v\n", file, metadata[0].Err)
+			continue
+		}
+
 		if len(metadata) > 0 {
 			foundExif := false
 			for k, v := range metadata[0].Fields {
 				if strings.EqualFold(k, "DateTimeOriginal") || strings.EqualFold(k, "CreateDate") || strings.EqualFold(k, "DateCreated") {
-					//We have exif data, short circuit the loop
+					//We have date exif data, short circuit the loop
 					logger.Printf("Found %s of %s for %s. Short circuiting\n", k, v, file)
 					foundExif = true
 					break
 				}
 			}
-			if foundExif {
-				continue
-			} else {
-				var newFileModifyDate interface{}
+			if !foundExif {
+				var fileModifyDate interface{}
 				for k, v := range metadata[0].Fields {
 					if strings.EqualFold(k, "FileModifyDate") {
-						fileModifyDate, err := time.Parse("2006:01:02 15:04:05-07:00", v.(string))
-						if err != nil {
-							logger.Printf("Error parsing FileModifyDate for %s: %v\n", file, err)
-							break
-						}
-						if !fileModifyDate.Before(oneWeekAgo) {
-							logger.Printf("File %s was modified within the last week\n", file)
-						} else {
-							newFileModifyDate = v
-							break
-						}
+						fileModifyDate = v
+						break
 					}
 				}
-				if newFileModifyDate != nil {
-					metadata[0].Fields["DateTimeOriginal"] = newFileModifyDate
+				if fileModifyDate != nil {
+					metadata[0].Fields["DateTimeOriginal"] = fileModifyDate
+					metadata[0].Err = nil
+
 					et.WriteMetadata(metadata)
-					logger.Printf("Updated DateTimeOriginal for %s to %s\n", file, newFileModifyDate)
+
+					if metadata[0].Err != nil {
+						logger.Printf("Error writing metadata for %s: %v\n", file, metadata[0].Err)
+						continue
+					} else {
+						logger.Printf("Updated DateTimeOriginal for %s to %s\n", file, fileModifyDate)
+					}
 				}
 			}
 		} else {
 			logger.Printf("No metadata found for %s\n", file)
+		}
+		err = et.Close()
+		if err != nil {
+			logger.Printf("Error closing exiftool: %v\n", err)
+			return
 		}
 	}
 	fmt.Printf("Done\n")
